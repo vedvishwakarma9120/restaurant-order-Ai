@@ -29,7 +29,7 @@ load_dotenv()
 # ---------------- Config ----------------
 MENU_FILE = "menu.json"
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")  # tool-calling capable
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
 RESTAURANT_INFO = """Restaurant: Bhukhkhad Cafe
 Timings: 10 AM to 10 PM (Subah 10 baje se raat 10 baje tak)
@@ -227,9 +227,6 @@ def confirm_order_tool() -> str:
     SESSION.active_order_id = order_id
     SESSION.pending = {}
 
-    ORDERS[order_id]["status"] = "COOKING"
-    max_prep = max((i.get("prep_time", 15) for i in items), default=15)
-    time.sleep(min(max(max_prep // 5, 2), 4))
     ORDERS[order_id]["status"] = "COMPLETED"
 
     summary = ", ".join(f"{i['quantity']}x {i['dish']}" for i in items)
@@ -298,8 +295,7 @@ llm = (
     ChatGroq(
         model=GROQ_MODEL,
         api_key=GROQ_API_KEY,
-        reasoning_format="hidden",  # gpt-oss is a reasoning model - this stops its internal
-                                     # "thinking" text from leaking into the customer-facing reply.
+        temperature=0.3,
     )
     if GROQ_API_KEY
     else None
