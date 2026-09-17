@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bhukhkhad Cafe | AI Restaurant Concierge</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap"
+    rel="stylesheet">
+  <style>
+    :root {
+      --bg-top: #10165a;
+      --bg-bottom: #040518;
+      --surface: rgba(9, 12, 48, 0.82);
+      --surface-border: rgba(120, 140, 255, 0.22);
+      --ink: #f4f6ff;
+      --ink-muted: #b6bce8;
+      --ink-faint: #7d84b8;
+
+      --blue: #1f6bff;
+      --blue-deep: #0d3fc9;
+      --magenta: #ee2be0;
+      --magenta-deep: #a913a0;
+
+      --dog-a: #ffd166;
+      --dog-b: #f7a531;
+      --cat-a: #6fe3e8;
+      --cat-b: #23c6cf;
+
+      --user-bubble: linear-gradient(135deg, var(--magenta) 0%, var(--magenta-deep) 100%);
+      --user-ink: #fff6ff;
+      --bot-bubble: linear-gradient(135deg, var(--blue) 0%, var(--blue-deep) 100%);
+      --bot-ink: #f4f6ff;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background:
+        radial-gradient(ellipse 520px 240px at 50% -40px, rgba(31, 107, 255, 0.22), transparent 70%),
+        radial-gradient(circle at 85% 100%, rgba(238, 43, 224, 0.14), transparent 55%),
+        linear-gradient(180deg, var(--bg-top) 0%, var(--bg-bottom) 100%);
+      color: var(--ink);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      padding: 20px 16px;
+      overflow-x: hidden;
+    }
+
+    .app-card {
+      background: var(--surface);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      width: 100%;
+      max-width: 680px;
+      height: 90vh;
+      display: flex;
+      flex-direction: column;
+      border: 1px solid var(--surface-border);
+      border-radius: 24px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.65), 0 0 60px rgba(31, 107, 255, 0.08);
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* Header */
+    .header {
+      position: relative;
+      z-index: 1;
+      padding: 22px 24px 16px;
+      background: rgba(6, 8, 34, 0.55);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-section {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+    }
+
+    .brand-icon {
+      width: 46px;
+      height: 46px;
+      border-radius: 14px;
+      flex-shrink: 0;
+      background: linear-gradient(150deg, var(--blue) 0%, var(--magenta) 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #ffffff;
+      box-shadow: 0 6px 16px rgba(31, 107, 255, 0.4);
+    }
+
+    .brand-title {
+      font-family: 'Baloo 2', sans-serif;
+      font-size: 26px;
+      font-weight: 800;
+      letter-spacing: 0.2px;
+      color: #ffffff;
+      line-height: 1.1;
+      text-shadow: 0 2px 10px rgba(31, 107, 255, 0.35);
+    }
+
+    .brand-subtitle {
+      font-size: 12.5px;
+      color: var(--ink-muted);
+      font-weight: 500;
+      margin-top: 3px;
+    }
+
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 7px 13px;
+      background: rgba(111, 227, 232, 0.12);
+      border: 1px solid rgba(111, 227, 232, 0.35);
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+      color: #6fe3e8;
+      flex-shrink: 0;
+      white-space: nowrap;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      background: #6fe3e8;
+      border-radius: 50%;
+      box-shadow: 0 0 8px #6fe3e8;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1;
+        transform: scale(1);
+      }
+
+      50% {
+        opacity: 0.4;
+        transform: scale(0.85);
+      }
+    }
+
+    /* Suggestion Chips */
+    .chips-bar {
+      position: relative;
+      z-index: 1;
+      padding: 12px 20px;
+      background: rgba(4, 5, 24, 0.4);
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      scrollbar-width: none;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .chips-bar::-webkit-scrollbar {
+      display: none;
+    }
+
+    .chip {
+      flex-shrink: 0;
+      padding: 7px 15px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(120, 140, 255, 0.25);
+      border-radius: 20px;
+      color: #d6dcff;
+      font-family: 'Inter', sans-serif;
+      font-size: 12.5px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .chip:hover {
+      background: rgba(31, 107, 255, 0.18);
+      border-color: var(--blue);
+      color: #ffffff;
+      transform: translateY(-1px);
+    }
+
+    .chip:focus-visible,
+    .send-btn:focus-visible,
+    .input-field:focus-visible {
+      outline: 2px solid var(--blue);
+      outline-offset: 2px;
+    }
+
+    /* Chat Area */
+    .chat-body {
+      flex: 1;
+      padding: 22px 22px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .chat-body::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .chat-body::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.12);
+      border-radius: 4px;
+    }
+
+    /* Message row: avatar + bubble column */
+    .msg-row {
+      display: flex;
+      align-items: flex-end;
+      gap: 9px;
+      max-width: 86%;
+      animation: fadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .msg-row.bot {
+      align-self: flex-start;
+      flex-direction: row;
+    }
+
+    .msg-row.user {
+      align-self: flex-end;
+      flex-direction: row-reverse;
+    }
+
+    .avatar {
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
+    }
+
+    /* Bot = dog avatar (yellow/orange), User = cat avatar (cyan) — matches reference design */
+    .avatar.bot {
+      background: linear-gradient(150deg, var(--dog-a) 0%, var(--dog-b) 100%);
+    }
+
+    .avatar.user {
+      background: linear-gradient(150deg, var(--cat-a) 0%, var(--cat-b) 100%);
+    }
+
+    .msg-col {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .msg-row.user .msg-col {
+      align-items: flex-end;
+    }
+
+    .msg-sender {
+      font-size: 11px;
+      color: var(--ink-faint);
+      margin-bottom: 4px;
+      padding: 0 4px;
+      font-weight: 600;
+    }
+
+    .bubble {
+      padding: 13px 18px;
+      font-family: 'Inter', sans-serif;
+      font-size: 14.5px;
+      font-weight: 600;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      word-break: break-word;
+      border-radius: 20px;
+    }
+
+    .bot .bubble {
+      background: var(--bot-bubble);
+      color: var(--bot-ink);
+      border-radius: 6px 20px 20px 20px;
+      box-shadow: 0 4px 14px rgba(13, 63, 201, 0.35);
+    }
+
+    .user .bubble {
+      background: var(--user-bubble);
+      color: var(--user-ink);
+      border-radius: 20px 6px 20px 20px;
+      box-shadow: 0 4px 14px rgba(169, 19, 160, 0.35);
+    }
+
+    .msg-time {
+      font-size: 10px;
+      color: var(--ink-faint);
+      margin-top: 4px;
+      padding: 0 4px;
+    }
+
+    /* Typing Indicator */
+    .typing-row {
+      display: none;
+      align-self: flex-start;
+      align-items: flex-end;
+      gap: 9px;
+    }
+
+    .typing-box {
+      background: var(--bot-bubble);
+      padding: 13px 18px;
+      border-radius: 6px 20px 20px 20px;
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .typing-dot {
+      width: 6px;
+      height: 6px;
+      background: #ffffff;
+      border-radius: 50%;
+      opacity: 0.65;
+      animation: bounce 1.4s infinite ease-in-out both;
+    }
+
+    .typing-dot:nth-child(1) {
+      animation-delay: -0.32s;
+    }
+
+    .typing-dot:nth-child(2) {
+      animation-delay: -0.16s;
+    }
+
+    @keyframes bounce {
+
+      0%,
+      80%,
+      100% {
+        transform: scale(0.6);
+      }
+
+      40% {
+        transform: scale(1);
+        opacity: 1;
+      }
+    }
+
+    /* Input Footer */
+    .input-bar {
+      position: relative;
+      z-index: 1;
+      padding: 16px 20px;
+      background: rgba(5, 6, 26, 0.65);
+      border-top: 1px solid rgba(255, 255, 255, 0.07);
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .input-wrapper {
+      flex: 1;
+      position: relative;
+    }
+
+    .input-field {
+      width: 100%;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 14px;
+      padding: 13px 18px;
+      color: #ffffff;
+      font-family: 'Inter', sans-serif;
+      font-size: 14px;
+      outline: none;
+      transition: all 0.2s ease;
+    }
+
+    .input-field::placeholder {
+      color: var(--ink-faint);
+    }
+
+    .input-field:focus {
+      border-color: var(--blue);
+      background: rgba(255, 255, 255, 0.09);
+      box-shadow: 0 0 0 3px rgba(31, 107, 255, 0.2);
+    }
+
+    .send-btn {
+      background: linear-gradient(140deg, var(--magenta) 0%, var(--magenta-deep) 100%);
+      color: #ffffff;
+      border: none;
+      border-radius: 14px;
+      width: 48px;
+      height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: all 0.2s ease;
+      box-shadow: 0 4px 14px rgba(238, 43, 224, 0.4);
+    }
+
+    .send-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 18px rgba(238, 43, 224, 0.5);
+    }
+
+    .send-btn:active {
+      transform: translateY(0);
+    }
+
+    .send-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .send-btn svg {
+      width: 20px;
+      height: 20px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .msg-row {
+        animation: none;
+      }
+
+      .status-dot,
+      .typing-dot {
+        animation: none;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <div class="app-card">
+    <!-- Header -->
+    <header class="header">
+      <div class="brand-section">
+        <div class="brand-icon">
+          <!-- Steaming bowl icon -->
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 12a8 8 0 0 0 16 0" />
+            <path d="M3 12h18" />
+            <path d="M5 16c0 2.4 3 4.4 7 4.4s7-2 7-4.4" />
+            <path d="M11 2.5c-1 1.3-1 2.4 0 3.6M15 2.5c.8 1.1.8 2 0 3" />
+          </svg>
+        </div>
+        <div style="min-width:0;">
+          <div class="brand-title">Bhukhkhad Cafe</div>
+          <div class="brand-subtitle">Order Now</div>
+        </div>
+      </div>
+      <div class="status-badge">
+        <div class="status-dot"></div>
+        <span>KITCHEN LIVE</span>
+      </div>
+    </header>
+
+    <!-- Quick Action Chips -->
+    <div class="chips-bar">
+      <button class="chip" onclick="quickSend('Menu dikhao')">Menu Dikhao</button>
+      <button class="chip" onclick="quickSend('2 Butter Chicken aur 1 Mango Lassi pack kardo')">2 Butter Chicken + Mango
+        Lassi</button>
+      <button class="chip" onclick="quickSend('1 Kadhai Paneer aur 2 Dal Makhani')">Kadhai Paneer + Dal Makhani</button>
+      <button class="chip" onclick="quickSend('Chicken Biryani hai kya?')">Chicken Biryani</button>
+      <button class="chip" onclick="quickSend('Restaurant timings kya hai?')">Timings</button>
+      <button class="chip" onclick="quickSend('Restaurant kahan pe hai?')">Location</button>
+      <button class="chip" onclick="quickSend('Order status')">Status Check</button>
+    </div>
+
+    <!-- Chat Messages -->
+    <main class="chat-body" id="chatBody">
+      <div class="msg-row bot">
+        <div class="avatar bot">🐶</div>
+        <div class="msg-col">
+          <div class="msg-sender">Bhukhkhad Cafe</div>
+          <div class="bubble">Namaste & Welcome to Bhukhkhad Cafe!
+            Main aapki kya madad karoon?</div>
+          <div class="msg-time" id="welcomeTime"></div>
+        </div>
+      </div>
+
+      <div class="typing-row" id="typingIndicator">
+        <div class="avatar bot">🐶</div>
+        <div class="typing-box">
+          <div class="typing-dot"></div>
+          <div class="typing-dot"></div>
+          <div class="typing-dot"></div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Input Bar -->
+    <footer class="input-bar">
+      <div class="input-wrapper">
+        <input type="text" id="userInput" class="input-field" placeholder="Type in Hindi, Hinglish or English..."
+          autocomplete="off">
+      </div>
+      <button class="send-btn" id="sendBtn" onclick="sendMessage()" title="Send Message">
+        <svg viewBox="0 0 24 24">
+          <line x1="22" y1="2" x2="11" y2="13"></line>
+          <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+        </svg>
+      </button>
+    </footer>
+  </div>
+
+  <script>
+    const chatBody = document.getElementById('chatBody');
+    const userInput = document.getElementById('userInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const typingIndicator = document.getElementById('typingIndicator');
+    const BOT_NAME = 'Bhukhkhad Cafe';
+
+    const BOT_AVATAR_EMOJI = '🐶';
+    const USER_AVATAR_EMOJI = '🐱';
+
+    function getTimeString() {
+      const now = new Date();
+      return now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+
+    document.getElementById('welcomeTime').textContent = getTimeString();
+
+    function buildMessageRow(sender) {
+      const row = document.createElement('div');
+      row.className = 'msg-row ' + sender;
+
+      const avatar = document.createElement('div');
+      avatar.className = 'avatar ' + sender;
+      avatar.textContent = sender === 'user' ? USER_AVATAR_EMOJI : BOT_AVATAR_EMOJI;
+
+      const col = document.createElement('div');
+      col.className = 'msg-col';
+
+      const senderLabel = document.createElement('div');
+      senderLabel.className = 'msg-sender';
+      senderLabel.textContent = sender === 'user' ? 'You' : BOT_NAME;
+
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+
+      const time = document.createElement('div');
+      time.className = 'msg-time';
+      time.textContent = getTimeString();
+
+      col.appendChild(senderLabel);
+      col.appendChild(bubble);
+      col.appendChild(time);
+      row.appendChild(avatar);
+      row.appendChild(col);
+
+      return { row, bubble };
+    }
+
+    function appendMessage(sender, text) {
+      const { row, bubble } = buildMessageRow(sender);
+      bubble.textContent = text;
+      chatBody.insertBefore(row, typingIndicator);
+      chatBody.scrollTop = chatBody.scrollHeight;
+    }
+
+    function createBotMessageContainer() {
+      const { row, bubble } = buildMessageRow('bot');
+      chatBody.insertBefore(row, typingIndicator);
+      chatBody.scrollTop = chatBody.scrollHeight;
+      return { group: row, bubble };
+    }
+
+    const API_BASE = (window.location.protocol === 'http:' || window.location.protocol === 'https:')
+      ? ''
+      : 'http://127.0.0.1:5000';
+
+    async function sendMessage(overrideText = null) {
+      const text = (overrideText || userInput.value).trim();
+      if (!text) return;
+
+      appendMessage('user', text);
+      if (!overrideText) userInput.value = '';
+
+      userInput.disabled = true;
+      sendBtn.disabled = true;
+      typingIndicator.style.display = 'flex';
+      chatBody.scrollTop = chatBody.scrollHeight;
+
+      let botRef = null;
+      let success = false;
+
+      // 1. Try streaming response
+      try {
+        const response = await fetch(`${API_BASE}/chat/stream`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text })
+        });
+
+        if (!response.ok) {
+          throw new Error('Stream HTTP status ' + response.status);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split('\n\n');
+          buffer = parts.pop();
+
+          for (const part of parts) {
+            const line = part.trim();
+            if (line.startsWith('data: ')) {
+              const dataStr = line.slice(6).trim();
+              if (dataStr === '[DONE]') {
+                success = true;
+                break;
+              }
+              try {
+                const parsed = JSON.parse(dataStr);
+                if (parsed.token) {
+                  if (!botRef) {
+                    typingIndicator.style.display = 'none';
+                    botRef = createBotMessageContainer();
+                  }
+                  botRef.bubble.textContent += parsed.token;
+                  chatBody.scrollTop = chatBody.scrollHeight;
+                  success = true;
+                }
+              } catch (e) { }
+            }
+          }
+        }
+      } catch (streamErr) {
+        console.warn('Streaming encountered an issue, trying standard endpoint:', streamErr);
+      }
+
+      // 2. If streaming didn't produce text, fallback to /chat
+      if (!success) {
+        try {
+          const fbResponse = await fetch(`${API_BASE}/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: text })
+          });
+          const data = await fbResponse.json();
+          typingIndicator.style.display = 'none';
+          appendMessage('bot', data.reply || 'No response received.');
+        } catch (err) {
+          typingIndicator.style.display = 'none';
+          appendMessage('bot', 'Connection error. Please make sure "uv run python robo.py" is running.');
+        }
+      }
+
+      typingIndicator.style.display = 'none';
+      userInput.disabled = false;
+      sendBtn.disabled = false;
+      userInput.focus();
+      chatBody.scrollTop = chatBody.scrollHeight;
+    }
+
+    function quickSend(promptText) {
+      sendMessage(promptText);
+    }
+
+    userInput.addEventListener('keypress', function (e) {
+      if (e.key === 'Enter') {
+        sendMessage();
+      }
+    });
+
+    userInput.focus();
+  </script>
+</body>
+
+</html>

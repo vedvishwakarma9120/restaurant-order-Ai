@@ -1,0 +1,418 @@
+[
+  {
+    "id": 1,
+    "dish_name": "Butter Chicken",
+    "price": 299,
+    "available_quantity": 8,
+    "preparation_time": 20,
+    "description": "Tender chicken cooked in a rich tomato, butter, and cream gravy with aromatic Indian spices."
+  },
+  {
+    "id": 2,
+    "dish_name": "Paneer Butter Masala",
+    "price": 249,
+    "available_quantity": 10,
+    "preparation_time": 15,
+    "description": "Soft paneer cubes simmered in a creamy tomato and butter gravy with mild Indian spices."
+  },
+  {
+    "id": 3,
+    "dish_name": "Kadhai Paneer",
+    "price": 239,
+    "available_quantity": 7,
+    "preparation_time": 15,
+    "description": "Paneer cooked with bell peppers, onions, tomatoes, and freshly ground kadhai spices."
+  },
+  {
+    "id": 4,
+    "dish_name": "Chicken Tikka Masala",
+    "price": 289,
+    "available_quantity": 6,
+    "preparation_time": 22,
+    "description": "Grilled chicken tikka served in a flavorful creamy tomato and spice-based gravy."
+  },
+  {
+    "id": 5,
+    "dish_name": "Dal Makhani",
+    "price": 179,
+    "available_quantity": 12,
+    "preparation_time": 15,
+    "description": "Slow-cooked black lentils and kidney beans finished with butter and cream."
+  },
+  {
+    "id": 6,
+    "dish_name": "Dal Tadka",
+    "price": 149,
+    "available_quantity": 15,
+    "preparation_time": 12,
+    "description": "Yellow lentils tempered with garlic, cumin, red chilies, and aromatic Indian spices."
+  },
+  {
+    "id": 7,
+    "dish_name": "Chole Bhature",
+    "price": 169,
+    "available_quantity": 10,
+    "preparation_time": 12,
+    "description": "Spicy chickpea curry served with fluffy deep-fried bhature and onion salad."
+  },
+  {
+    "id": 8,
+    "dish_name": "Rajma Chawal",
+    "price": 159,
+    "available_quantity": 9,
+    "preparation_time": 15,
+    "description": "Punjabi-style kidney bean curry served with steamed basmati rice."
+  },
+  {
+    "id": 9,
+    "dish_name": "Paneer Tikka",
+    "price": 219,
+    "available_quantity": 11,
+    "preparation_time": 18,
+    "description": "Char-grilled paneer marinated with yogurt, bell peppers, onions, and Indian spices."
+  },
+  {
+    "id": 10,
+    "dish_name": "Chicken Tikka",
+    "price": 269,
+    "available_quantity": 8,
+    "preparation_time": 20,
+    "description": "Juicy chicken pieces marinated in spiced yogurt and grilled in a traditional tandoor."
+  },
+  {
+    "id": 11,
+    "dish_name": "Tandoori Chicken",
+    "price": 279,
+    "available_quantity": 5,
+    "preparation_time": 25,
+    "description": "Chicken marinated in yogurt and aromatic spices, roasted until smoky and tender."
+  },
+  {
+    "id": 12,
+    "dish_name": "Chicken Biryani",
+    "price": 249,
+    "available_quantity": 12,
+    "preparation_time": 25,
+    "description": "Fragrant basmati rice layered with spiced chicken, saffron, fried onions, and herbs."
+  },
+  {
+    "id": 13,
+    "dish_name": "Veg Biryani",
+    "price": 199,
+    "available_quantity": 14,
+    "preparation_time": 22,
+    "description": "Aromatic basmati rice cooked with seasonal vegetables, herbs, saffron, and Indian spices."
+  },
+  {
+    "id": 14,
+    "dish_name": "Mutton Biryani",
+    "price": 329,
+    "available_quantity": 5,
+    "preparation_time": 30,
+    "description": "Slow-cooked tender mutton layered with fragrant basmati rice and traditional biryani spices."
+  },
+  {
+    "id": 15,
+    "dish_name": "Masala Dosa",
+    "price": 129,
+    "available_quantity": 15,
+    "preparation_time": 10,
+    "description": "Crispy South Indian dosa filled with spiced potato masala and served with chutney and sambar."
+  },
+  {
+    "id": 16,
+    "dish_name": "Paneer Dosa",
+    "price": 169,
+    "available_quantity": 9,
+    "preparation_time": 12,
+    "description": "Crispy dosa stuffed with spicy paneer filling and served with coconut chutney and sambar."
+  },
+  {
+    "id": 17,
+    "dish_name": "Idli Sambar",
+    "price": 99,
+    "available_quantity": 20,
+    "preparation_time": 8,
+    "description": "Soft steamed rice cakes served with hot sambar and fresh coconut chutney."
+  },
+  {
+    "id": 18,
+    "dish_name": "Pav Bhaji",
+    "price": 119,
+    "available_quantity": 18,
+    "preparation_time": 10,
+    "description": "Spiced mashed vegetable curry served with buttery toasted pav and chopped onions."
+  },
+  {
+    "id": 19,
+    "dish_name": "Vada Pav",
+    "price": 69,
+    "available_quantity": 25,
+    "preparation_time": 7,
+    "description": "Mumbai-style spicy potato fritter placed inside a soft pav with chutneys and garlic masala."
+  },
+  {
+    "id": 20,
+    "dish_name": "Samosa Chaat",
+    "price": 109,
+    "available_quantity": 15,
+    "preparation_time": 8,
+    "description": "Crispy samosas topped with chickpeas, yogurt, chutneys, onions, and chaat masala."
+  },
+  {
+    "id": 21,
+    "dish_name": "Aloo Tikki Chaat",
+    "price": 99,
+    "available_quantity": 14,
+    "preparation_time": 8,
+    "description": "Crispy potato patties topped with yogurt, mint chutney, tamarind chutney, and spices."
+  },
+  {
+    "id": 22,
+    "dish_name": "Pani Puri",
+    "price": 79,
+    "available_quantity": 30,
+    "preparation_time": 5,
+    "description": "Crispy puris filled with spiced potato, tangy tamarind water, mint, and flavorful chutneys."
+  },
+  {
+    "id": 23,
+    "dish_name": "Dahi Puri",
+    "price": 109,
+    "available_quantity": 16,
+    "preparation_time": 7,
+    "description": "Crispy puris filled with potatoes and chutneys, topped with creamy yogurt and chaat masala."
+  },
+  {
+    "id": 24,
+    "dish_name": "Chilli Paneer",
+    "price": 199,
+    "available_quantity": 10,
+    "preparation_time": 15,
+    "description": "Crispy paneer tossed with bell peppers, onions, soy sauce, and spicy Indo-Chinese sauce."
+  },
+  {
+    "id": 25,
+    "dish_name": "Chicken Manchurian",
+    "price": 229,
+    "available_quantity": 8,
+    "preparation_time": 18,
+    "description": "Crispy chicken pieces tossed in a spicy, tangy Indo-Chinese Manchurian sauce."
+  },
+  {
+    "id": 26,
+    "dish_name": "Veg Hakka Noodles",
+    "price": 159,
+    "available_quantity": 12,
+    "preparation_time": 12,
+    "description": "Stir-fried noodles tossed with fresh vegetables, soy sauce, garlic, and Asian spices."
+  },
+  {
+    "id": 27,
+    "dish_name": "Chicken Hakka Noodles",
+    "price": 199,
+    "available_quantity": 9,
+    "preparation_time": 15,
+    "description": "Wok-tossed noodles with tender chicken, vegetables, garlic, soy sauce, and chili."
+  },
+  {
+    "id": 28,
+    "dish_name": "Desi Paneer Burger",
+    "price": 149,
+    "available_quantity": 10,
+    "preparation_time": 10,
+    "description": "Indian-style burger with a crispy spiced paneer patty, mint mayo, onions, and lettuce."
+  },
+  {
+    "id": 29,
+    "dish_name": "Tandoori Chicken Burger",
+    "price": 189,
+    "available_quantity": 7,
+    "preparation_time": 14,
+    "description": "Modern burger featuring smoky tandoori chicken, lettuce, onions, and spicy yogurt sauce."
+  },
+  {
+    "id": 30,
+    "dish_name": "Butter Chicken Pizza",
+    "price": 249,
+    "available_quantity": 6,
+    "preparation_time": 18,
+    "description": "Fusion pizza topped with butter chicken, mozzarella cheese, onions, and Indian spices."
+  },
+  {
+    "id": 31,
+    "dish_name": "Paneer Tikka Pizza",
+    "price": 229,
+    "available_quantity": 8,
+    "preparation_time": 17,
+    "description": "Indian fusion pizza topped with paneer tikka, bell peppers, onions, mozzarella, and mint sauce."
+  },
+  {
+    "id": 32,
+    "dish_name": "Masala Fries",
+    "price": 99,
+    "available_quantity": 20,
+    "preparation_time": 7,
+    "description": "Crispy french fries tossed with Indian masala, chili, coriander, and tangy seasoning."
+  },
+  {
+    "id": 33,
+    "dish_name": "Peri Peri Paneer Wrap",
+    "price": 159,
+    "available_quantity": 12,
+    "preparation_time": 10,
+    "description": "Soft wrap filled with spicy peri peri paneer, crunchy vegetables, lettuce, and creamy sauce."
+  },
+  {
+    "id": 34,
+    "dish_name": "Chicken Tikka Wrap",
+    "price": 179,
+    "available_quantity": 10,
+    "preparation_time": 12,
+    "description": "Grilled chicken tikka wrapped with fresh vegetables, mint chutney, and creamy yogurt sauce."
+  },
+  {
+    "id": 35,
+    "dish_name": "Paneer Kathi Roll",
+    "price": 149,
+    "available_quantity": 14,
+    "preparation_time": 10,
+    "description": "Spiced paneer and vegetables wrapped in a flaky paratha with chutneys and onions."
+  },
+  {
+    "id": 36,
+    "dish_name": "Chicken Kathi Roll",
+    "price": 179,
+    "available_quantity": 11,
+    "preparation_time": 12,
+    "description": "Juicy spiced chicken wrapped in flaky paratha with onions, peppers, and tangy chutney."
+  },
+  {
+    "id": 37,
+    "dish_name": "Mango Lassi",
+    "price": 89,
+    "available_quantity": 18,
+    "preparation_time": 4,
+    "description": "Refreshing creamy yogurt drink blended with ripe mango pulp and a touch of cardamom."
+  },
+  {
+    "id": 38,
+    "dish_name": "Masala Chaas",
+    "price": 59,
+    "available_quantity": 25,
+    "preparation_time": 3,
+    "description": "Traditional chilled buttermilk flavored with roasted cumin, coriander, and mild spices."
+  },
+  {
+    "id": 39,
+    "dish_name": "Gulab Jamun",
+    "price": 79,
+    "available_quantity": 20,
+    "preparation_time": 5,
+    "description": "Soft milk-solid dumplings soaked in warm cardamom-flavored sugar syrup."
+  },
+  {
+    "id": 40,
+    "dish_name": "Rasmalai",
+    "price": 109,
+    "available_quantity": 12,
+    "preparation_time": 5,
+    "description": "Soft cottage cheese dumplings soaked in chilled saffron and cardamom-flavored milk."
+  },
+  {
+    "id": 41,
+    "dish_name": "Kulhad Chai",
+    "price": 49,
+    "available_quantity": 30,
+    "preparation_time": 5,
+    "description": "Traditional Indian milk tea infused with cardamom, ginger, and aromatic tea leaves, served in a clay cup."
+  },
+  {
+    "id": 42,
+    "dish_name": "Cold Coffee",
+    "price": 119,
+    "available_quantity": 15,
+    "preparation_time": 5,
+    "description": "Chilled blended coffee with milk, ice, and a smooth creamy texture."
+  },
+  {
+    "id": 43,
+    "dish_name": "Masala Maggi",
+    "price": 89,
+    "available_quantity": 18,
+    "preparation_time": 7,
+    "description": "Classic instant noodles cooked with onions, tomatoes, green chilies, and Indian masala."
+  },
+  {
+    "id": 44,
+    "dish_name": "Paneer Tikka Sandwich",
+    "price": 139,
+    "available_quantity": 10,
+    "preparation_time": 8,
+    "description": "Grilled sandwich stuffed with smoky paneer tikka, vegetables, cheese, and mint mayo."
+  },
+  {
+    "id": 45,
+    "dish_name": "Desi Cheese Garlic Bread",
+    "price": 129,
+    "available_quantity": 12,
+    "preparation_time": 9,
+    "description": "Toasted garlic bread topped with melted cheese, coriander, chili flakes, and Indian seasoning."
+  },
+  {
+    "id": 46,
+    "dish_name": "Tandoori Momos",
+    "price": 169,
+    "available_quantity": 13,
+    "preparation_time": 12,
+    "description": "Steamed momos marinated in smoky tandoori spices and grilled with onions and bell peppers."
+  },
+  {
+    "id": 47,
+    "dish_name": "Paneer Momos",
+    "price": 149,
+    "available_quantity": 15,
+    "preparation_time": 10,
+    "description": "Steamed dumplings filled with seasoned paneer, vegetables, herbs, and mild spices."
+  },
+  {
+    "id": 48,
+    "dish_name": "Chicken Momos",
+    "price": 179,
+    "available_quantity": 10,
+    "preparation_time": 12,
+    "description": "Soft steamed dumplings filled with juicy minced chicken, vegetables, garlic, and spices."
+  },
+  {
+    "id": 49,
+    "dish_name": "Tandoori Roti",
+    "price": 20,
+    "available_quantity": 50,
+    "preparation_time": 5,
+    "description": "Traditional whole wheat flatbread baked in a tandoor."
+  },
+  {
+    "id": 50,
+    "dish_name": "Butter Naan",
+    "price": 40,
+    "available_quantity": 40,
+    "preparation_time": 7,
+    "description": "Crisp and soft leavened flatbread brushed with fresh butter."
+  },
+  {
+    "id": 51,
+    "dish_name": "Steamed Basmati Rice",
+    "price": 99,
+    "available_quantity": 30,
+    "preparation_time": 8,
+    "description": "Fluffy, fragrant long-grain steamed basmati rice."
+  },
+  {
+    "id": 52,
+    "dish_name": "Jeera Rice",
+    "price": 119,
+    "available_quantity": 25,
+    "preparation_time": 8,
+    "description": "Aromatic basmati rice tempered with ghee and roasted cumin seeds."
+  }
+]
