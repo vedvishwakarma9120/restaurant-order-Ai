@@ -54,57 +54,41 @@ COMMON_ALIASES = {
 
 ORDERS = {}  # order_id -> order dict
 
-# ---------------- RAG (Qdrant + embeddings) ----------------
-embedder = None   # set in _init_models()
-qdrant = None     # set in _init_models()
-MODEL_READY = False
+import difflib
 
-
-def _init_models():
-    """Load SentenceTransformer + build Qdrant index in background thread."""
-    global embedder, qdrant, MODEL_READY
-    try:
-        print("[startup] Loading SentenceTransformer model in background...", flush=True)
-        from sentence_transformers import SentenceTransformer
-        from qdrant_client import QdrantClient
-        from qdrant_client.models import Distance, VectorParams, PointStruct
-
-        embedder = SentenceTransformer("all-MiniLM-L6-v2")
-        print("[startup] Model loaded. Building Qdrant index...", flush=True)
-        qdrant = QdrantClient(":memory:")
-        qdrant.create_collection("menu", vectors_config=VectorParams(size=384, distance=Distance.COSINE))
-        qdrant.upsert(
-            collection_name="menu",
-            points=[
-                PointStruct(
-                    id=item["id"],
-                    vector=embedder.encode(f"{item['dish_name']}: {item['description']}").tolist(),
-                    payload=item,
-                )
-                for item in MENU
-            ],
-        )
-        MODEL_READY = True
-        print("[startup] Qdrant index ready. Assistant fully ready!", flush=True)
-    except Exception as e:
-        print(f"[startup] Note: Vector search initialization: {e}", flush=True)
+# ---------------- Menu Search & Dish Resolution (Fast, Zero-RAM) ----------------
+MODEL_READY = True
 
 
 def _vector_search(query: str, k: int = 3):
-    if embedder is not None and qdrant is not None:
-        try:
-            vec = embedder.encode(query).tolist()
-            return [h.payload for h in qdrant.query_points(collection_name="menu", query=vec, limit=k).points]
-        except Exception:
-            pass
-    # Fallback: substring matching on dish name or description
+    """Semantic & fuzzy search over the menu items by name, description, and keywords."""
     q = query.lower().strip()
-    matches = [m for m in MENU if q in m["dish_name"].lower() or q in m.get("description", "").lower()]
-    return matches[:k] if matches else MENU[:k]
+    words = [w for w in q.split() if len(w) > 2]
+    scored = []
+    for item in MENU:
+        name = item["dish_name"].lower()
+        desc = item.get("description", "").lower()
+        score = 0.0
+        if q == name:
+            score = 1.0
+        elif q in name:
+            score = 0.9
+        elif any(w in name for w in words):
+            score = 0.7
+        elif q in desc or any(w in desc for w in words):
+            score = 0.5
+        else:
+            ratio = difflib.SequenceMatcher(None, q, name).ratio()
+            if ratio > 0.4:
+                score = ratio * 0.8
+        scored.append((score, item))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    matches = [item for score, item in scored[:k] if score > 0]
+    return matches if matches else MENU[:k]
 
 
-def _resolve_dish(raw_name: str, threshold: float = 0.42):
-    """Exact -> alias -> substring -> vector-search-with-confidence-threshold. Returns menu item or None."""
+def _resolve_dish(raw_name: str, threshold: float = 0.45):
+    """Exact -> alias -> substring -> fuzzy difflib matcher. Returns menu item or None."""
     q = raw_name.lower().strip()
     q = COMMON_ALIASES.get(q, q).lower()
     for item in MENU:
@@ -113,14 +97,16 @@ def _resolve_dish(raw_name: str, threshold: float = 0.42):
     for item in MENU:
         if item["dish_name"].lower() in q or q in item["dish_name"].lower():
             return item
-    if embedder is not None and qdrant is not None:
-        try:
-            vec = embedder.encode(raw_name).tolist()
-            hits = qdrant.query_points(collection_name="menu", query=vec, limit=1).points
-            if hits and hits[0].score >= threshold:
-                return hits[0].payload
-        except Exception:
-            pass
+    best_item = None
+    best_score = 0.0
+    for item in MENU:
+        name = item["dish_name"].lower()
+        ratio = difflib.SequenceMatcher(None, q, name).ratio()
+        if ratio > best_score:
+            best_score = ratio
+            best_item = item
+    if best_score >= threshold:
+        return best_item
     return None
 
 
@@ -383,24 +369,15 @@ class RestaurantBot:
 
 
 # ---------------- FastAPI app ----------------
-
-@asynccontextmanager
-async def lifespan(application: FastAPI):
-    """Startup: background thread loads ML model so uvicorn binds port instantly."""
-    import threading
-    t = threading.Thread(target=_init_models, daemon=True)
-    t.start()
-    yield  # uvicorn binds port immediately!
-
-app = FastAPI(title="Bhukhkhad Cafe AI", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Bhukhkhad Cafe AI", version="1.0.0")
 bot = RestaurantBot()
 
-# CORS Middleware (replaces old Flask @after_request decorator)
+# CORS Middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type", "Accept"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -409,18 +386,17 @@ class ChatRequest(BaseModel):
     message: str = ""
 
 
-@app.get("/")
-@app.get("/index.html")
+@app.api_route("/", methods=["GET", "HEAD"])
+@app.api_route("/index.html", methods=["GET", "HEAD"])
 def index():
     return FileResponse("index.html", media_type="text/html")
 
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 def health():
-    """Uptime Robot ping endpoint - no LLM call, confirms process is up."""
+    """Uptime / Health endpoint."""
     return JSONResponse({
         "status": "ok",
-        "model_ready": MODEL_READY,
         "menu_items": len(MENU),
     })
 
