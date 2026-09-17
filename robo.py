@@ -8,9 +8,6 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 
 from dotenv import load_dotenv
-from sentence_transformers import SentenceTransformer
-from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct
 
 from langchain_core.tools import tool
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
@@ -58,39 +55,52 @@ COMMON_ALIASES = {
 ORDERS = {}  # order_id -> order dict
 
 # ---------------- RAG (Qdrant + embeddings) ----------------
-# These are initialized in the FastAPI lifespan handler (below) so that
-# uvicorn can bind the port FIRST, then load the heavy ML model.
 embedder = None   # set in _init_models()
 qdrant = None     # set in _init_models()
-MODEL_READY = False  # flipped to True once init finishes
+MODEL_READY = False
 
 
 def _init_models():
-    """Load SentenceTransformer + build Qdrant index.  Called once at startup."""
+    """Load SentenceTransformer + build Qdrant index in background thread."""
     global embedder, qdrant, MODEL_READY
-    print("[startup] Loading SentenceTransformer model...")
-    embedder = SentenceTransformer("all-MiniLM-L6-v2")
-    print("[startup] Model loaded. Building Qdrant index...")
-    qdrant = QdrantClient(":memory:")
-    qdrant.create_collection("menu", vectors_config=VectorParams(size=384, distance=Distance.COSINE))
-    qdrant.upsert(
-        collection_name="menu",
-        points=[
-            PointStruct(
-                id=item["id"],
-                vector=embedder.encode(f"{item['dish_name']}: {item['description']}").tolist(),
-                payload=item,
-            )
-            for item in MENU
-        ],
-    )
-    MODEL_READY = True
-    print("[startup] Qdrant index ready. Model fully loaded.")
+    try:
+        print("[startup] Loading SentenceTransformer model in background...", flush=True)
+        from sentence_transformers import SentenceTransformer
+        from qdrant_client import QdrantClient
+        from qdrant_client.models import Distance, VectorParams, PointStruct
+
+        embedder = SentenceTransformer("all-MiniLM-L6-v2")
+        print("[startup] Model loaded. Building Qdrant index...", flush=True)
+        qdrant = QdrantClient(":memory:")
+        qdrant.create_collection("menu", vectors_config=VectorParams(size=384, distance=Distance.COSINE))
+        qdrant.upsert(
+            collection_name="menu",
+            points=[
+                PointStruct(
+                    id=item["id"],
+                    vector=embedder.encode(f"{item['dish_name']}: {item['description']}").tolist(),
+                    payload=item,
+                )
+                for item in MENU
+            ],
+        )
+        MODEL_READY = True
+        print("[startup] Qdrant index ready. Assistant fully ready!", flush=True)
+    except Exception as e:
+        print(f"[startup] Note: Vector search initialization: {e}", flush=True)
 
 
 def _vector_search(query: str, k: int = 3):
-    vec = embedder.encode(query).tolist()
-    return [h.payload for h in qdrant.query_points(collection_name="menu", query=vec, limit=k).points]
+    if embedder is not None and qdrant is not None:
+        try:
+            vec = embedder.encode(query).tolist()
+            return [h.payload for h in qdrant.query_points(collection_name="menu", query=vec, limit=k).points]
+        except Exception:
+            pass
+    # Fallback: substring matching on dish name or description
+    q = query.lower().strip()
+    matches = [m for m in MENU if q in m["dish_name"].lower() or q in m.get("description", "").lower()]
+    return matches[:k] if matches else MENU[:k]
 
 
 def _resolve_dish(raw_name: str, threshold: float = 0.42):
@@ -103,10 +113,14 @@ def _resolve_dish(raw_name: str, threshold: float = 0.42):
     for item in MENU:
         if item["dish_name"].lower() in q or q in item["dish_name"].lower():
             return item
-    vec = embedder.encode(raw_name).tolist()
-    hits = qdrant.query_points(collection_name="menu", query=vec, limit=1).points
-    if hits and hits[0].score >= threshold:  # <-- confidence gate (fixes random-match bug)
-        return hits[0].payload
+    if embedder is not None and qdrant is not None:
+        try:
+            vec = embedder.encode(raw_name).tolist()
+            hits = qdrant.query_points(collection_name="menu", query=vec, limit=1).points
+            if hits and hits[0].score >= threshold:
+                return hits[0].payload
+        except Exception:
+            pass
     return None
 
 
@@ -372,10 +386,11 @@ class RestaurantBot:
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
-    """Startup: load the heavy ML model AFTER uvicorn has bound the port."""
-    _init_models()
-    yield  # app runs here
-    # shutdown (nothing to clean up)
+    """Startup: background thread loads ML model so uvicorn binds port instantly."""
+    import threading
+    t = threading.Thread(target=_init_models, daemon=True)
+    t.start()
+    yield  # uvicorn binds port immediately!
 
 app = FastAPI(title="Bhukhkhad Cafe AI", version="1.0.0", lifespan=lifespan)
 bot = RestaurantBot()
@@ -402,16 +417,16 @@ def index():
 
 @app.get("/health")
 def health():
-    """Uptime Robot ping endpoint - no LLM call, just confirms process + menu are loaded."""
-    if not MODEL_READY:
-        return JSONResponse({"status": "loading", "menu_items": len(MENU)}, status_code=503)
-    return JSONResponse({"status": "ok", "menu_items": len(MENU)})
+    """Uptime Robot ping endpoint - no LLM call, confirms process is up."""
+    return JSONResponse({
+        "status": "ok",
+        "model_ready": MODEL_READY,
+        "menu_items": len(MENU),
+    })
 
 
 @app.post("/chat")
 def chat(body: ChatRequest):
-    if not MODEL_READY:
-        return JSONResponse({"reply": "Cafe abhi khul raha hai... thoda wait karo! (Model loading, please wait a moment.)"})
     try:
         reply = bot.process_message(body.message)
     except Exception as e:
@@ -421,12 +436,6 @@ def chat(body: ChatRequest):
 
 @app.post("/chat/stream")
 def chat_stream(body: ChatRequest):
-    if not MODEL_READY:
-        def loading_msg():
-            yield f"data: {json.dumps({'token': 'Cafe abhi khul raha hai... thoda wait karo! (Model loading)'})}\n\n"
-            yield "data: [DONE]\n\n"
-        return StreamingResponse(loading_msg(), media_type="text/event-stream")
-
     def generate():
         try:
             for token in bot.process_message_stream(body.message):
@@ -444,14 +453,14 @@ def chat_stream(body: ChatRequest):
 
 def main():
     import uvicorn
-    print("=== Bhukhkhad Cafe - LangChain Assistant (FastAPI) ===")
+    print("=== Bhukhkhad Cafe - LangChain Assistant (FastAPI) ===", flush=True)
     if not GROQ_API_KEY:
-        print("[Warning] GROQ_API_KEY missing in .env - assistant will not respond until set.\n")
+        print("[Warning] GROQ_API_KEY missing in .env - assistant will not respond until set.\n", flush=True)
     else:
-        print(f"[Ready] Groq model: {GROQ_MODEL}\n")
+        print(f"[Ready] Groq model: {GROQ_MODEL}\n", flush=True)
 
     port = int(os.environ.get("PORT", 10000))
-    print(f"[Web UI] http://localhost:{port}\n")
+    print(f"[Web UI] Listening on 0.0.0.0:{port}\n", flush=True)
     uvicorn.run("robo:app", host="0.0.0.0", port=port, reload=False)
 
 

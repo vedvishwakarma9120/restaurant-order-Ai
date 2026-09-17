@@ -5,7 +5,7 @@ services:
     region: singapore   # closest to India
     plan: free
     buildCommand: pip install uv && uv sync --frozen --no-dev
-    startCommand: uv run python robo.py
+    startCommand: uv run python -u robo.py
     envVars:
       - key: GROQ_API_KEY
         sync: false       # set manually in Render dashboard (never commit real keys)
@@ -13,3 +13,5 @@ services:
         value: openai/gpt-oss-120b
       - key: PYTHON_VERSION
         value: "3.12"
+      - key: PYTHONUNBUFFERED
+        value: "1"
