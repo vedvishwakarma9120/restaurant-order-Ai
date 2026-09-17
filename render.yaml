@@ -12,4 +12,4 @@ services:
       - key: GROQ_MODEL
         value: openai/gpt-oss-120b
       - key: PYTHON_VERSION
-        value: "3.12"     # Render's latest stable; uv handles the venv
+        value: "3.12"
