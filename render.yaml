@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: bhukhkhad-cafe-ai
+    runtime: python
+    region: singapore   # closest to India
+    plan: free
+    buildCommand: pip install uv && uv sync --frozen
+    startCommand: uv run uvicorn robo:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false       # set manually in Render dashboard (never commit real keys)
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-120b
+      - key: PYTHON_VERSION
+        value: "3.12"     # Render's latest stable; uv handles the venv

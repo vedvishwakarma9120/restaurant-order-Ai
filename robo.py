@@ -15,7 +15,10 @@ from langchain_core.tools import tool
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from langchain_groq import ChatGroq
 
-from flask import Flask, request, jsonify, Response, send_file
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from pydantic import BaseModel
 
 if sys.stdout.encoding != "utf-8":
     try:
@@ -115,7 +118,7 @@ class Session:
 
 SESSION = Session()
 
-# ---------------- Tools (this replaces the old regex/JSON-NLU + if/else pipeline) ----------------
+# ---------------- Tools ----------------
 
 @tool
 def search_menu_tool(query: str) -> str:
@@ -134,7 +137,7 @@ def search_menu_tool(query: str) -> str:
 def get_full_menu_tool() -> str:
     """Return the full menu as dish name and price only, one dish per line, short form,
     only items that are currently available. Use when the customer asks to see the menu.
-    Relay this output to the customer exactly as-is, one line per dish — do not summarize it
+    Relay this output to the customer exactly as-is, one line per dish - do not summarize it
     into a sentence and do not add description or availability text."""
     return "\n".join(
         f"{m['dish_name']} - Rs.{m['price']}"
@@ -254,15 +257,15 @@ SYSTEM_PROMPT = f"""You are "Bhukhkhad Cafe", the ordering assistant for Bhukhkh
 
 Rules:
 - Detect the customer's language (English, Hindi, or Hinglish) from their LATEST message and reply in that same style.
-- NEVER invent dish names, prices or availability yourself — always use the tools for real data.
+- NEVER invent dish names, prices or availability yourself - always use the tools for real data.
 - If the customer asks to see the menu, call get_full_menu_tool and paste its output back to the
   customer EXACTLY as returned, one dish per line ("Dish - Rs.price"). Do NOT summarize it into a
   sentence, do NOT add description/availability text, and do NOT say things like "here is our menu"
-  followed by nothing — the actual line-by-line list must appear in your reply.
+  followed by nothing - the actual line-by-line list must appear in your reply.
 - If the customer names one or more dishes to order, call add_to_order_tool ONCE PER DISTINCT DISH,
   then call view_order_tool, then show the exact order summary text returned by view_order_tool
   (do not reword the item/total lines), followed on a new line by ONE of these exact confirmation
-  questions, matching the customer's language/style — do not invent any other wording:
+  questions, matching the customer's language/style - do not invent any other wording:
     English: "Shall I confirm this order?"
     Hindi/Hinglish: "Kya main yeh order confirm kar doon?"
 - If the customer wants to remove/change an item, call remove_from_order_tool, then view_order_tool,
@@ -272,7 +275,7 @@ Rules:
 - If a dish is unavailable or not found, relay the alternatives the tool gives you.
 - Mention timings/location ONLY if the customer asks about them.
 - After confirm_order_tool succeeds, show the Order ID, items and total in the customer's language/style,
-  but do NOT write your own thank-you / closing line — the system appends a fixed one automatically.
+  but do NOT write your own thank-you / closing line - the system appends a fixed one automatically.
 - No emojis. Keep replies short, warm and natural.
 """
 
@@ -280,7 +283,7 @@ llm = (
     ChatGroq(
         model=GROQ_MODEL,
         api_key=GROQ_API_KEY,
-        reasoning_format="hidden",  # gpt-oss is a reasoning model — this stops its internal
+        reasoning_format="hidden",  # gpt-oss is a reasoning model - this stops its internal
                                      # "thinking" text from leaking into the customer-facing reply.
     )
     if GROQ_API_KEY
@@ -289,7 +292,7 @@ llm = (
 llm_with_tools = llm.bind_tools(TOOLS) if llm else None
 
 
-# ---------------- Agent loop (replaces the old giant if/else state machine) ----------------
+# ---------------- Agent loop ----------------
 class RestaurantBot:
     def __init__(self):
         self.messages = [SystemMessage(content=SYSTEM_PROMPT)]
@@ -302,7 +305,7 @@ class RestaurantBot:
 
     def process_message(self, user_input: str) -> str:
         if not llm_with_tools:
-            return "GROQ_API_KEY .env mein set nahi hai — kripya add karke restart karein."
+            return "GROQ_API_KEY .env mein set nahi hai - kripya add karke restart karein."
 
         self.messages.append(HumanMessage(content=user_input))
         ai_msg = None
@@ -325,11 +328,10 @@ class RestaurantBot:
         self._trim()
         reply = (ai_msg.content if ai_msg else "") or "Maaf kijiye, kuch samajh nahi aaya. Dobara batayein?"
 
-        # Safety net: a suspiciously short/garbled reply (model sometimes mangles Hinglish text)
-        # gets one retry with a stricter nudge instead of reaching the customer as-is.
+        # Safety net: a suspiciously short/garbled reply gets one retry with a stricter nudge.
         if len(reply.strip()) < 8 or not re.search(r"[a-zA-Z]{3,}", reply):
             self.messages.append(HumanMessage(
-                content="(system note: your last reply looked incomplete or garbled — "
+                content="(system note: your last reply looked incomplete or garbled - "
                         "please resend a clear, well-formed reply in the same language/style.)"
             ))
             retry_msg = llm_with_tools.invoke(self.messages)
@@ -351,77 +353,73 @@ class RestaurantBot:
             time.sleep(0.015)
 
 
-# ---------------- Flask app (WSGI — this is what gunicorn needs as "main:app") ----------------
-app = Flask(__name__)
+# ---------------- FastAPI app ----------------
+app = FastAPI(title="Bhukhkhad Cafe AI", version="1.0.0")
 bot = RestaurantBot()
 
+# CORS Middleware (replaces old Flask @after_request decorator)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Accept"],
+)
 
-@app.after_request
-def add_cors_headers(response):
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Accept"
-    return response
+
+# Pydantic request body schema
+class ChatRequest(BaseModel):
+    message: str = ""
 
 
-@app.route("/", methods=["GET"])
-@app.route("/index.html", methods=["GET"])
+@app.get("/")
+@app.get("/index.html")
 def index():
-    return send_file("index.html")
+    return FileResponse("index.html", media_type="text/html")
 
 
-# Uptime Robot (or any monitor) should ping this. Cheap, no LLM call, just confirms the
-# process + menu are loaded and responsive.
-@app.route("/health", methods=["GET"])
+@app.get("/health")
 def health():
-    return jsonify({"status": "ok", "menu_items": len(MENU)}), 200
+    """Uptime Robot ping endpoint - no LLM call, just confirms process + menu are loaded."""
+    return JSONResponse({"status": "ok", "menu_items": len(MENU)})
 
 
-@app.route("/chat", methods=["POST", "OPTIONS"])
-def chat():
-    if request.method == "OPTIONS":
-        return "", 200
-    data = request.get_json(silent=True) or {}
-    user_msg = data.get("message", "")
+@app.post("/chat")
+def chat(body: ChatRequest):
     try:
-        reply = bot.process_message(user_msg)
+        reply = bot.process_message(body.message)
     except Exception as e:
         reply = f"Error: {e}"
-    return jsonify({"reply": reply})
+    return JSONResponse({"reply": reply})
 
 
-@app.route("/chat/stream", methods=["POST", "OPTIONS"])
-def chat_stream():
-    if request.method == "OPTIONS":
-        return "", 200
-    data = request.get_json(silent=True) or {}
-    user_msg = data.get("message", "")
-
+@app.post("/chat/stream")
+def chat_stream(body: ChatRequest):
     def generate():
         try:
-            for token in bot.process_message_stream(user_msg):
+            for token in bot.process_message_stream(body.message):
                 yield f"data: {json.dumps({'token': token})}\n\n"
             yield "data: [DONE]\n\n"
         except (BrokenPipeError, ConnectionResetError):
             pass
 
-    return Response(
+    return StreamingResponse(
         generate(),
-        mimetype="text/event-stream",
+        media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
     )
 
 
 def main():
-    print("=== Bhukhkhad Cafe — LangChain Assistant ===")
+    import uvicorn
+    print("=== Bhukhkhad Cafe - LangChain Assistant (FastAPI) ===")
     if not GROQ_API_KEY:
-        print("[Warning] GROQ_API_KEY missing in .env — assistant will not respond until set.\n")
+        print("[Warning] GROQ_API_KEY missing in .env - assistant will not respond until set.\n")
     else:
         print(f"[Ready] Groq model: {GROQ_MODEL}\n")
 
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT", 8000))
     print(f"[Web UI] http://localhost:{port}\n")
-    app.run(host="0.0.0.0", port=port)
+    uvicorn.run("robo:app", host="0.0.0.0", port=port, reload=False)
 
 
 if __name__ == "__main__":
