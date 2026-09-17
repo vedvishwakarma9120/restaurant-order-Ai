@@ -4,9 +4,7 @@ import re
 import sys
 import time
 import uuid
-import threading
 from datetime import datetime
-from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
@@ -16,6 +14,8 @@ from qdrant_client.models import Distance, VectorParams, PointStruct
 from langchain_core.tools import tool
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from langchain_groq import ChatGroq
+
+from flask import Flask, request, jsonify, Response, send_file
 
 if sys.stdout.encoding != "utf-8":
     try:
@@ -280,7 +280,6 @@ llm = (
     ChatGroq(
         model=GROQ_MODEL,
         api_key=GROQ_API_KEY,
-
         reasoning_format="hidden",  # gpt-oss is a reasoning model — this stops its internal
                                      # "thinking" text from leaking into the customer-facing reply.
     )
@@ -352,79 +351,65 @@ class RestaurantBot:
             time.sleep(0.015)
 
 
-# ---------------- HTTP server for the existing frontend ----------------
-class ChatHandler(BaseHTTPRequestHandler):
-    bot_instance = None
+# ---------------- Flask app (WSGI — this is what gunicorn needs as "main:app") ----------------
+app = Flask(__name__)
+bot = RestaurantBot()
 
-    def log_message(self, format, *args):
-        return
 
-    def _cors(self):
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Accept")
+@app.after_request
+def add_cors_headers(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Accept"
+    return response
 
-    def do_OPTIONS(self):
-        self.send_response(200)
-        self._cors()
-        self.end_headers()
 
-    def do_GET(self):
-        if self.path in ["/", "/index.html"]:
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self._cors()
-            self.end_headers()
-            with open("index.html", "rb") as f:
-                self.wfile.write(f.read())
-        else:
-            self.send_response(404)
-            self._cors()
-            self.end_headers()
+@app.route("/", methods=["GET"])
+@app.route("/index.html", methods=["GET"])
+def index():
+    return send_file("index.html")
 
-    def do_POST(self):
-        if self.path == "/chat/stream":
-            length = int(self.headers.get("Content-Length", 0))
-            try:
-                user_msg = json.loads(self.rfile.read(length).decode("utf-8")).get("message", "")
-            except Exception:
-                user_msg = ""
 
-            self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-            self.send_header("Cache-Control", "no-cache")
-            self.send_header("Connection", "keep-alive")
-            self._cors()
-            self.end_headers()
-            try:
-                for token in self.bot_instance.process_message_stream(user_msg):
-                    self.wfile.write(f"data: {json.dumps({'token': token})}\n\n".encode("utf-8"))
-                    self.wfile.flush()
-                self.wfile.write(b"data: [DONE]\n\n")
-                self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError):
-                pass
-            finally:
-                self.close_connection = True
+# Uptime Robot (or any monitor) should ping this. Cheap, no LLM call, just confirms the
+# process + menu are loaded and responsive.
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok", "menu_items": len(MENU)}), 200
 
-        elif self.path == "/chat":
-            length = int(self.headers.get("Content-Length", 0))
-            try:
-                user_msg = json.loads(self.rfile.read(length).decode("utf-8")).get("message", "")
-                reply = self.bot_instance.process_message(user_msg)
-            except Exception as e:
-                reply = f"Error: {e}"
-            body = json.dumps({"reply": reply}).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self._cors()
-            self.end_headers()
-            self.wfile.write(body)
-        else:
-            self.send_response(404)
-            self._cors()
-            self.end_headers()
+
+@app.route("/chat", methods=["POST", "OPTIONS"])
+def chat():
+    if request.method == "OPTIONS":
+        return "", 200
+    data = request.get_json(silent=True) or {}
+    user_msg = data.get("message", "")
+    try:
+        reply = bot.process_message(user_msg)
+    except Exception as e:
+        reply = f"Error: {e}"
+    return jsonify({"reply": reply})
+
+
+@app.route("/chat/stream", methods=["POST", "OPTIONS"])
+def chat_stream():
+    if request.method == "OPTIONS":
+        return "", 200
+    data = request.get_json(silent=True) or {}
+    user_msg = data.get("message", "")
+
+    def generate():
+        try:
+            for token in bot.process_message_stream(user_msg):
+                yield f"data: {json.dumps({'token': token})}\n\n"
+            yield "data: [DONE]\n\n"
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    return Response(
+        generate(),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )
 
 
 def main():
@@ -434,37 +419,9 @@ def main():
     else:
         print(f"[Ready] Groq model: {GROQ_MODEL}\n")
 
-    bot = RestaurantBot()
-    ChatHandler.bot_instance = bot
-
-    server = None
-    for port in [5000, 5001, 8080]:
-        try:
-            server = ThreadingHTTPServer(("0.0.0.0", port), ChatHandler)
-            threading.Thread(target=server.serve_forever, daemon=True).start()
-            print(f"[Web UI] http://localhost:{port}\n")
-            break
-        except Exception:
-            continue
-    if not server:
-        print("[Web UI] Could not bind to 5000/5001/8080. Terminal chat still works.")
-
-    while True:
-        try:
-            user_input = input("Customer: ").strip()
-            if not user_input:
-                continue
-            if user_input.lower() in ["exit", "quit"]:
-                print("Bot: Thank you for visiting! Have a wonderful day.")
-                break
-            print("Bot: ", end="", flush=True)
-            for token in bot.process_message_stream(user_input):
-                sys.stdout.write(token)
-                sys.stdout.flush()
-            print("\n")
-        except (KeyboardInterrupt, EOFError):
-            print("\nExiting. Goodbye!")
-            break
+    port = int(os.environ.get("PORT", 5000))
+    print(f"[Web UI] http://localhost:{port}\n")
+    app.run(host="0.0.0.0", port=port)
 
 
 if __name__ == "__main__":
