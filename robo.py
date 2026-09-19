@@ -13,7 +13,7 @@ from langchain_core.tools import tool
 from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from langchain_groq import ChatGroq
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
@@ -35,6 +35,7 @@ RESTAURANT_INFO = """Restaurant: Bhukhkhad Cafe
 Timings: 10 AM to 10 PM (Subah 10 baje se raat 10 baje tak)
 Location: 123 Food Street, Downtown
 Dine-in and takeout both available."""
+
 
 # This exact line is always appended after a successful order confirmation,
 # in English, no matter what language the rest of the reply is in.
@@ -124,11 +125,90 @@ def _strip_trailing_thanks(text: str) -> str:
     return "\n".join(lines).rstrip()
 
 
-# ---------------- Session state (per-bot; simple single-user like original) ----------------
+# ---------------- Rate Limiter ----------------
+from collections import defaultdict
+
+class RateLimiter:
+    """In-memory sliding window rate limiter per client IP."""
+    def __init__(self, max_requests: int = 20, window_seconds: int = 60, min_interval: float = 0.5):
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self.min_interval = min_interval
+        self.requests = defaultdict(list)
+        self.last_request = defaultdict(float)
+
+    def is_allowed(self, client_id: str) -> tuple[bool, str]:
+        now = time.time()
+        # Burst check (minimum time between consecutive requests)
+        last = self.last_request.get(client_id, 0.0)
+        if (now - last) < self.min_interval:
+            return False, "⚠️ Aap bohot jaldi messages bhej rahe hain. Kripya 1 second intezar karein."
+
+        # Sliding window check
+        cutoff = now - self.window_seconds
+        timestamps = [t for t in self.requests[client_id] if t > cutoff]
+        if len(timestamps) >= self.max_requests:
+            oldest = timestamps[0]
+            retry_after = max(1, int(self.window_seconds - (now - oldest)) + 1)
+            return False, f"⚠️ Rate limit exceed ho gaya hai! (Max {self.max_requests} requests/min). Kripya {retry_after}s intezar karein."
+
+        timestamps.append(now)
+        self.requests[client_id] = timestamps
+        self.last_request[client_id] = now
+        return True, ""
+
+RATE_LIMITER = RateLimiter(max_requests=15, window_seconds=60, min_interval=0.8)
+
+
+# ---------------- Session state (with Attempt Limiter & Token Budget) ----------------
 class Session:
+    max_failed_attempts: int = 3
+    lockout_duration: int = 600  # 10 minutes in seconds
+
     def __init__(self):
         self.pending = {}          # dish_key -> {"dish","quantity","price","prep_time"}
         self.active_order_id = None
+        self.failed_attempts = 0   # Failed / cancelled order attempts counter
+        self.blocked_until = 0.0   # Timestamp until which user is locked out (10 mins)
+        self.total_tokens_used = 0 # Track session tokens for metrics
+        self.menu_shown = False    # Shows menu once per chat session
+
+    def is_blocked(self) -> bool:
+        if self.blocked_until > 0:
+            if time.time() < self.blocked_until:
+                return True
+            else:
+                self.blocked_until = 0.0
+                self.failed_attempts = 0
+                return False
+        return False
+
+    def get_lockout_message(self) -> str:
+        rem_sec = max(0, int(self.blocked_until - time.time()))
+        mins = rem_sec // 60
+        secs = rem_sec % 60
+        time_left = f"{mins} min {secs} sec" if mins > 0 else f"{secs} sec"
+        return f"🚫 Security timeout active! Aapne 3 baar order fail/cancel kiya hai. Kripya {time_left} baad koshish karein."
+
+    def record_failed_attempt(self) -> tuple[int, bool, str]:
+        """Record an unconfirmed cancel or empty order attempt."""
+        self.failed_attempts += 1
+        if self.failed_attempts >= self.max_failed_attempts:
+            self.blocked_until = time.time() + self.lockout_duration
+            return self.max_failed_attempts, True, f"🚫 Security Lockout Activated! (Attempt {self.max_failed_attempts}/{self.max_failed_attempts}). 10-minute timeout shuru ho chuka hai."
+        else:
+            return self.failed_attempts, False, f"⚠️ Warning: Failed/Cancelled Attempt {self.failed_attempts}/{self.max_failed_attempts}. 3 attempts ke baad 10-minute security timeout lag jayega."
+
+    def reset_attempts(self):
+        self.failed_attempts = 0
+        self.blocked_until = 0.0
+
+    def reset_session(self):
+        self.pending = {}
+        self.active_order_id = None
+        self.failed_attempts = 0
+        self.blocked_until = 0.0
+        self.menu_shown = False
 
 
 SESSION = Session()
@@ -149,11 +229,19 @@ def search_menu_tool(query: str) -> str:
 
 
 @tool
-def get_full_menu_tool() -> str:
+def get_full_menu_tool(force_show: bool = False) -> str:
     """Return the full menu as dish name and price only, one dish per line, short form,
     only items that are currently available. Use when the customer asks to see the menu.
-    Relay this output to the customer exactly as-is, one line per dish - do not summarize it
-    into a sentence and do not add description or availability text."""
+    The menu is displayed once per chat session. If customer specifically asks to see it again (dobara/again/fir se),
+    pass force_show=True."""
+    if SESSION.menu_shown and not force_show:
+        return (
+            "NOTE: Menu has already been displayed once in this chat. Tell the customer: "
+            "'Menu upar chat mein already share kiya gaya hai, aap scroll karke dekh sakte hain! "
+            "Kisi specific dish ke baare mein jaanna ho ya order karna ho to batayein.'"
+        )
+
+    SESSION.menu_shown = True
     return "\n".join(
         f"{m['dish_name']} - Rs.{m['price']}"
         for m in MENU
@@ -219,13 +307,18 @@ def confirm_order_tool() -> str:
     """Finalize the pending order and send it to the kitchen. ONLY call this when the customer has
     explicitly agreed (haan/yes/confirm/ok/theek hai)."""
     if not SESSION.pending:
-        return "No pending order to confirm."
+        _, is_blocked, warning = SESSION.record_failed_attempt()
+        if is_blocked:
+            return f"No pending order to confirm. {warning} {SESSION.get_lockout_message()}"
+        return f"No pending order to confirm. {warning}"
+
     items = list(SESSION.pending.values())
     total = round(sum(i["price"] * i["quantity"] for i in items), 2)
     order_id = f"ORD-{uuid.uuid4().hex[:6].upper()}"
     ORDERS[order_id] = {"items": items, "total": total, "status": "CONFIRMED", "created_at": datetime.now().isoformat()}
     SESSION.active_order_id = order_id
     SESSION.pending = {}
+    SESSION.reset_attempts()  # Reset failed attempts counter on successful order
 
     ORDERS[order_id]["status"] = "COMPLETED"
 
@@ -237,15 +330,18 @@ def confirm_order_tool() -> str:
 def cancel_order_tool() -> str:
     """Cancel the pending (unconfirmed) order, or the last confirmed order if nothing is pending.
     Use when the customer says cancel/nahi/stop/mat karo."""
+    _, is_blocked, warning = SESSION.record_failed_attempt()
+
     if SESSION.pending:
         SESSION.pending = {}
-        return "Pending order cleared."
-    if SESSION.active_order_id and SESSION.active_order_id in ORDERS:
+        return f"Pending order cleared. {warning}"
+    elif SESSION.active_order_id and SESSION.active_order_id in ORDERS:
         oid = SESSION.active_order_id
         ORDERS[oid]["status"] = "CANCELLED"
         SESSION.active_order_id = None
-        return f"Order {oid} cancelled."
-    return "No order to cancel."
+        return f"Order {oid} cancelled. {warning}"
+    else:
+        return f"No order to cancel. {warning}"
 
 
 @tool
@@ -263,39 +359,44 @@ TOOLS = [
 ]
 TOOLS_BY_NAME = {t.name: t for t in TOOLS}
 
-SYSTEM_PROMPT = f"""You are "Bhukhkhad Cafe", the ordering assistant for Bhukhkhad Cafe.
+SYSTEM_PROMPT = f"""You are "Bhukhkhad Cafe", the official AI ordering assistant for Bhukhkhad Cafe.
 
 {RESTAURANT_INFO}
 
-Rules:
-- Detect the customer's language (English, Hindi, or Hinglish) from their LATEST message and reply in that same style.
-- NEVER invent dish names, prices or availability yourself - always use the tools for real data.
-- If the customer asks to see the menu, call get_full_menu_tool and paste its output back to the
-  customer EXACTLY as returned, one dish per line ("Dish - Rs.price"). Do NOT summarize it into a
-  sentence, do NOT add description/availability text, and do NOT say things like "here is our menu"
-  followed by nothing - the actual line-by-line list must appear in your reply.
-- If the customer names one or more dishes to order, call add_to_order_tool ONCE PER DISTINCT DISH,
-  then call view_order_tool, then show the exact order summary text returned by view_order_tool
-  (do not reword the item/total lines), followed on a new line by ONE of these exact confirmation
-  questions, matching the customer's language/style - do not invent any other wording:
-    English: "Shall I confirm this order?"
-    Hindi/Hinglish: "Kya main yeh order confirm kar doon?"
-- If the customer wants to remove/change an item, call remove_from_order_tool, then view_order_tool,
-  then show the updated summary (again exactly as returned) and ask again using the same fixed
-  confirmation question above.
-- Only call confirm_order_tool on a clear yes/haan/confirm. Only call cancel_order_tool on a clear no/nahi/cancel.
-- If a dish is unavailable or not found, relay the alternatives the tool gives you.
-- Mention timings/location ONLY if the customer asks about them.
-- After confirm_order_tool succeeds, show the Order ID, items and total in the customer's language/style,
-  but do NOT write your own thank-you / closing line - the system appends a fixed one automatically.
-- No emojis. Keep replies short, warm and natural.
+STRICT OPERATING RULES:
+1. TOKEN SAVING & CONCISENESS:
+   - For all regular replies, keep them strictly short and under 2 sentences. No small talk, no filler phrases, and no emojis.
+2. LANGUAGE CONSISTENCY:
+   - Reply strictly in the customer's language (English, Hindi, or Hinglish) detected from their LATEST message.
+3. MENU DISPLAY (SHOWS ONCE PER CHAT):
+   - When the customer asks for the menu (e.g., "menu", "kya milega", "list", "show menu"), call get_full_menu_tool IMMEDIATELY.
+   - If the customer explicitly asks to see it again (e.g., "dobara", "again", "fir se"), call get_full_menu_tool(force_show=True).
+   - If the tool returns the dish list, output the complete list of dishes and prices exactly as returned, one dish per line.
+   - If the tool notes that the menu was already displayed earlier in the chat, politely remind the customer in 1 sentence that the menu is visible above in the chat, and offer to help with any specific dish or craving.
+4. ORDERING FLOW:
+   - When the customer names items to order, call add_to_order_tool for each distinct item, then call view_order_tool.
+   - Show the exact order summary from view_order_tool, followed on a new line by ONE of these exact confirmation questions:
+     English: "Shall I confirm this order?"
+     Hindi/Hinglish: "Kya main yeh order confirm kar doon?"
+   - For item removal or changes, call remove_from_order_tool, then view_order_tool, and ask the confirmation question again.
+5. CONFIRMATION & CANCELLATION:
+   - Whenever the customer says cancel, nahi, stop, mat karo, or abort, you MUST ALWAYS call cancel_order_tool EVERY SINGLE TIME, even if no order is pending.
+   - Whenever the customer says haan, yes, confirm, ok, or theek hai, you MUST ALWAYS call confirm_order_tool EVERY SINGLE TIME, even if pending order is empty.
+6. ACCURACY:
+   - NEVER invent dish names, prices, or inventory. Only use tools.
+   - After confirm_order_tool succeeds, state the Order ID, items, and total concisely. Do not write a thank-you line (system appends it automatically).
+7. ATTEMPTS & CANCELLATIONS:
+   - When an order is cancelled or empty confirmation attempted, respond simply and politely in 1 short sentence. The security warning banner is handled automatically.
+8. NO INTERNAL MONOLOGUE:
+   - NEVER output your thoughts, planning, or rules debate. Output ONLY the clean user-facing reply.
 """
 
 llm = (
     ChatGroq(
         model=GROQ_MODEL,
         api_key=GROQ_API_KEY,
-        temperature=0.3,
+        temperature=0.0,
+        max_tokens=1024,  # Increased from 350 so complete menu prints without cutoff
     )
     if GROQ_API_KEY
     else None
@@ -308,33 +409,95 @@ class RestaurantBot:
     def __init__(self):
         self.messages = [SystemMessage(content=SYSTEM_PROMPT)]
 
-    def _trim(self, keep_turns: int = 8):
+    def _trim(self, keep_turns: int = 3):
+        """Keep system prompt and the last `keep_turns` Human-AI conversation turns safely."""
         human_idx = [i for i, m in enumerate(self.messages) if isinstance(m, HumanMessage)]
         if len(human_idx) > keep_turns:
             cut = human_idx[-keep_turns]
             self.messages = [self.messages[0]] + self.messages[cut:]
 
     def process_message(self, user_input: str) -> str:
+        # Quick reset command
+        if user_input.strip().lower() in ["reset", "restart", "clear", "clear chat", "naya session"]:
+            SESSION.reset_session()
+            self.messages = [SystemMessage(content=SYSTEM_PROMPT)]
+            return "Session reset ho gaya hai! Namaste & Welcome to Bhukhkhad Cafe. Main aapki kya madad karoon?"
+
+        # 1. Check if user is locked out
+        if SESSION.is_blocked():
+            return SESSION.get_lockout_message()
+
+        # Direct fast menu response (shows once per chat session)
+        is_menu_req = bool(
+            re.search(r"^\s*(?:please\s+)?(?:mujhe\s+)?(?:dobara\s+|fir\s*se\s+|phir\s*se\s+|again\s+)?(?:apna\s+)?(?:kripya\s+)?(?:menu|menu\s*card|list|kya\s+milega)(?:\s+dikhao|\s+bhejo|\s+show|\s+batao|\s+dekhna\s+hai)?\s*[.!?]?\s*$", user_input, re.I)
+            or re.search(r"^\s*(?:show\s+)?(?:the\s+)?(?:menu)(?:\s+again|\s+please)?\s*[.!?]?\s*$", user_input, re.I)
+        )
+        if is_menu_req:
+            force_show = bool(re.search(r"\b(dobara|again|fir se|phir se)\b", user_input, re.I))
+            if SESSION.menu_shown and not force_show:
+                return "📋 Menu upar chat mein already share kiya gaya hai, aap scroll karke dekh sakte hain! Kisi dish ke baare mein jaanna ho ya order karna ho to batayein."
+
+            SESSION.menu_shown = True
+            menu_text = "\n".join(
+                f"{m['dish_name']} - Rs.{m['price']}"
+                for m in MENU
+                if m["available_quantity"] > 0
+            )
+            return f"📋 Bhukhkhad Cafe Menu:\n\n{menu_text}\n\nAap kya order karna chahenge?"
+
         if not llm_with_tools:
             return "GROQ_API_KEY .env mein set nahi hai - kripya add karke restart karein."
 
         self.messages.append(HumanMessage(content=user_input))
         ai_msg = None
         order_confirmed_this_turn = False
-        for _ in range(6):  # safety cap on tool-call rounds
-            ai_msg = llm_with_tools.invoke(self.messages)
-            self.messages.append(ai_msg)
-            if not ai_msg.tool_calls:
-                break
-            for call in ai_msg.tool_calls:
-                fn = TOOLS_BY_NAME.get(call["name"])
-                try:
-                    result = fn.invoke(call["args"]) if fn else f"Unknown tool: {call['name']}"
-                except Exception as e:
-                    result = f"Tool error: {e}"
-                if call["name"] == "confirm_order_tool" and isinstance(result, str) and result.startswith("Order "):
-                    order_confirmed_this_turn = True
-                self.messages.append(ToolMessage(content=str(result), tool_call_id=call["id"]))
+        attempt_warning_captured = ""
+        tokens_consumed = 0
+
+        try:
+            for _ in range(3):  # safety cap on tool-call rounds (token saver)
+                ai_msg = llm_with_tools.invoke(self.messages)
+                self.messages.append(ai_msg)
+
+                if ai_msg and hasattr(ai_msg, "response_metadata"):
+                    usage = ai_msg.response_metadata.get("token_usage", {})
+                    tokens_consumed += usage.get("total_tokens", 0)
+
+                if not ai_msg.tool_calls:
+                    break
+                for call in ai_msg.tool_calls:
+                    fn = TOOLS_BY_NAME.get(call["name"])
+                    try:
+                        result = fn.invoke(call["args"]) if fn else f"Unknown tool: {call['name']}"
+                    except Exception as e:
+                        result = f"Tool error: {e}"
+
+                    res_str = str(result)
+                    if call["name"] == "confirm_order_tool" and res_str.startswith("Order "):
+                        order_confirmed_this_turn = True
+
+                    # Capture attempt / lockout warnings from tools
+                    if "Attempt" in res_str or "Lockout" in res_str or "timeout" in res_str:
+                        attempt_warning_captured = res_str
+
+                    self.messages.append(ToolMessage(content=res_str, tool_call_id=call["id"]))
+        except Exception as e:
+            err_str = str(e)
+            if "429" in err_str or "rate limit" in err_str.lower():
+                return "Order service is busy. Kripya 5-10 second intezar karke dobara message karein."
+            return "Maaf kijiye, server busy hai. Kripya thodi der baad dobara batayein."
+
+        # Fallback check: If user clearly wanted to cancel, but LLM skipped calling cancel_order_tool
+        is_cancel_intent = bool(re.search(r"\b(cancel|nahi chahiye|mat karo|abort)\b", user_input, re.I)) and not bool(re.search(r"\b(hatao|nikal|remove)\b", user_input, re.I))
+        if is_cancel_intent and not attempt_warning_captured:
+            tool_res = cancel_order_tool.invoke({})
+            attempt_warning_captured = str(tool_res)
+
+        # Fallback check: If user clearly wanted to confirm empty order, but LLM skipped confirm_order_tool
+        is_confirm_intent = bool(re.search(r"\b(haan|yes|confirm|theek hai|ok|done)\b", user_input, re.I)) and not SESSION.pending and not bool(re.search(r"\b(nahi|not|cancel)\b", user_input, re.I))
+        if is_confirm_intent and not attempt_warning_captured and not order_confirmed_this_turn:
+            tool_res = confirm_order_tool.invoke({})
+            attempt_warning_captured = str(tool_res)
 
         self._trim()
         reply = (ai_msg.content if ai_msg else "") or "Maaf kijiye, kuch samajh nahi aaya. Dobara batayein?"
@@ -347,12 +510,37 @@ class RestaurantBot:
             ))
             retry_msg = llm_with_tools.invoke(self.messages)
             self.messages.append(retry_msg)
+            if retry_msg and hasattr(retry_msg, "response_metadata"):
+                usage = retry_msg.response_metadata.get("token_usage", {})
+                tokens_consumed += usage.get("total_tokens", 0)
             if retry_msg.content and len(retry_msg.content.strip()) >= 8:
                 reply = retry_msg.content
+
+        # Clean any raw attempt/lockout fragments the LLM might have duplicated from history
+        reply = re.sub(r"\(?Warning:\s*Failed/Cancelled\s*Attempt\s*\d+/\d+.*?\)?", "", reply, flags=re.IGNORECASE)
+        reply = re.sub(r"\(?\d+\s*failed/cancelled\s*attempts\s*reached.*?\)?", "", reply, flags=re.IGNORECASE)
+        reply = re.sub(r"🚫\s*Security\s*(?:timeout|Lockout).*?(?=\n|$)", "", reply, flags=re.IGNORECASE)
+        reply = re.sub(r"⚠️\s*Aapne\s*3\s*baar.*?(?=\n|$)", "", reply, flags=re.IGNORECASE)
+        reply = reply.strip()
+
+        # Guarantee: If lockout was activated this turn or active, ensure user sees lockout message immediately
+        if SESSION.is_blocked():
+            lock_msg = SESSION.get_lockout_message()
+            reply = f"{reply}\n\n{lock_msg}" if reply else lock_msg
+        elif attempt_warning_captured:
+            attempt_notice = f"⚠️ Warning: Failed/Cancelled Attempt {SESSION.failed_attempts}/{SESSION.max_failed_attempts}. 3 attempts ke baad 10-minute security timeout lag jayega."
+            reply = f"{reply}\n\n{attempt_notice}" if reply else attempt_notice
 
         if order_confirmed_this_turn:
             reply = _strip_trailing_thanks(reply)
             reply = f"{reply}\n\n{CLOSING_LINE}"
+
+        # Track session token consumption
+        if tokens_consumed > 0:
+            SESSION.total_tokens_used += tokens_consumed
+        else:
+            approx_tokens = (len(user_input) + len(reply)) // 3 + 120
+            SESSION.total_tokens_used += approx_tokens
 
         return reply
 
@@ -382,6 +570,13 @@ class ChatRequest(BaseModel):
     message: str = ""
 
 
+def get_client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "127.0.0.1"
+
+
 @app.api_route("/", methods=["GET", "HEAD"])
 @app.api_route("/index.html", methods=["GET", "HEAD"])
 def index():
@@ -394,11 +589,26 @@ def health():
     return JSONResponse({
         "status": "ok",
         "menu_items": len(MENU),
+        "failed_attempts": SESSION.failed_attempts,
+        "is_blocked": SESSION.is_blocked(),
+        "total_tokens_used": SESSION.total_tokens_used,
     })
 
 
+@app.post("/reset")
+def reset_endpoint():
+    SESSION.reset_session()
+    bot.messages = [SystemMessage(content=SYSTEM_PROMPT)]
+    return JSONResponse({"status": "reset", "reply": "Session reset ho gaya hai! Namaste & Welcome to Bhukhkhad Cafe."})
+
+
 @app.post("/chat")
-def chat(body: ChatRequest):
+def chat(body: ChatRequest, request: Request):
+    client_ip = get_client_ip(request)
+    allowed, err_msg = RATE_LIMITER.is_allowed(client_ip)
+    if not allowed:
+        return JSONResponse({"reply": err_msg})
+
     try:
         reply = bot.process_message(body.message)
     except Exception as e:
@@ -407,7 +617,19 @@ def chat(body: ChatRequest):
 
 
 @app.post("/chat/stream")
-def chat_stream(body: ChatRequest):
+def chat_stream(body: ChatRequest, request: Request):
+    client_ip = get_client_ip(request)
+    allowed, err_msg = RATE_LIMITER.is_allowed(client_ip)
+    if not allowed:
+        def rate_limited_stream():
+            yield f"data: {json.dumps({'token': err_msg})}\n\n"
+            yield "data: [DONE]\n\n"
+        return StreamingResponse(
+            rate_limited_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+        )
+
     def generate():
         try:
             for token in bot.process_message_stream(body.message):
@@ -432,8 +654,8 @@ def main():
         print(f"[Ready] Groq model: {GROQ_MODEL}\n", flush=True)
 
     port = int(os.environ.get("PORT", 10000))
-    print(f"[Web UI] Listening on 0.0.0.0:{port}\n", flush=True)
-    uvicorn.run("robo:app", host="0.0.0.0", port=port, reload=False)
+    print(f"[Web UI] Listening on http://localhost:{port}\n", flush=True)
+    uvicorn.run("robo:app", host="0.0.0.0", port=port, reload=True)
 
 
 if __name__ == "__main__":

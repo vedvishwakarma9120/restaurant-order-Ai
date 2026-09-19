@@ -500,6 +500,9 @@
     </header>
 
     <!-- Quick Action Chips -->
+    <div class="chips-bar">
+      <button class="chip" onclick="quickSend('Menu dikhao')">📋 Menu Dikhao</button>
+    </div>
 
     <!-- Chat Messages -->
     <main class="chat-body" id="chatBody">
@@ -602,7 +605,7 @@
 
     const API_BASE = (window.location.protocol === 'http:' || window.location.protocol === 'https:')
       ? ''
-      : 'http://127.0.0.1:5000';
+      : 'http://127.0.0.1:10000';
 
     async function sendMessage(overrideText = null) {
       const text = (overrideText || userInput.value).trim();
