@@ -607,6 +607,9 @@
       ? ''
       : 'http://127.0.0.1:10000';
 
+    // Unique session ID per page load — refreshing page = new session = fresh menu access
+    const SESSION_ID = crypto.randomUUID();
+
     async function sendMessage(overrideText = null) {
       const text = (overrideText || userInput.value).trim();
       if (!text) return;
@@ -627,7 +630,7 @@
         const response = await fetch(`${API_BASE}/chat/stream`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: text })
+          body: JSON.stringify({ message: text, session_id: SESSION_ID })
         });
 
         if (!response.ok) {
@@ -679,7 +682,7 @@
           const fbResponse = await fetch(`${API_BASE}/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: text })
+            body: JSON.stringify({ message: text, session_id: SESSION_ID })
           });
           const data = await fbResponse.json();
           typingIndicator.style.display = 'none';

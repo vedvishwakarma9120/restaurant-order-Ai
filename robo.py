@@ -55,6 +55,12 @@ COMMON_ALIASES = {
 
 ORDERS = {}  # order_id -> order dict
 
+# Per-session menu tracking: {session_id: True/False}
+# When user refreshes page / opens new tab, a new session_id is generated
+# so they can request menu again.
+MENU_SHOWN_SESSIONS = {}  # session_id -> bool
+_CURRENT_SESSION_ID = ""   # Set per-request, used by tools
+
 import difflib
 
 # ---------------- Menu Search & Dish Resolution (Fast, Zero-RAM) ----------------
@@ -171,7 +177,6 @@ class Session:
         self.failed_attempts = 0   # Failed / cancelled order attempts counter
         self.blocked_until = 0.0   # Timestamp until which user is locked out (10 mins)
         self.total_tokens_used = 0 # Track session tokens for metrics
-        self.menu_shown = False    # Shows menu once per chat session
 
     def is_blocked(self) -> bool:
         if self.blocked_until > 0:
@@ -208,7 +213,6 @@ class Session:
         self.active_order_id = None
         self.failed_attempts = 0
         self.blocked_until = 0.0
-        self.menu_shown = False
 
 
 SESSION = Session()
@@ -234,14 +238,16 @@ def get_full_menu_tool(force_show: bool = False) -> str:
     only items that are currently available. Use when the customer asks to see the menu.
     The menu is displayed once per chat session. If customer specifically asks to see it again (dobara/again/fir se),
     pass force_show=True."""
-    if SESSION.menu_shown and not force_show:
+    global _CURRENT_SESSION_ID
+    sid = _CURRENT_SESSION_ID
+    if MENU_SHOWN_SESSIONS.get(sid, False) and not force_show:
         return (
             "NOTE: Menu has already been displayed once in this chat. Tell the customer: "
             "'Menu upar chat mein already share kiya gaya hai, aap scroll karke dekh sakte hain! "
             "Kisi specific dish ke baare mein jaanna ho ya order karna ho to batayein.'"
         )
 
-    SESSION.menu_shown = True
+    MENU_SHOWN_SESSIONS[sid] = True
     return "\n".join(
         f"{m['dish_name']} - Rs.{m['price']}"
         for m in MENU
@@ -363,32 +369,35 @@ SYSTEM_PROMPT = f"""You are "Bhukhkhad Cafe", the official AI ordering assistant
 
 {RESTAURANT_INFO}
 
+CRITICAL RULE — ALWAYS OUTPUT TEXT:
+- After calling ANY tool, you MUST ALWAYS write a customer-facing reply. Never return an empty response.
+- If you called tools and got results, use those results to write your reply to the customer.
+- Even if a tool result is an error or empty, still write a short polite reply.
+
 STRICT OPERATING RULES:
-1. TOKEN SAVING & CONCISENESS:
-   - For all regular replies, keep them strictly short and under 2 sentences. No small talk, no filler phrases, and no emojis.
+1. CONCISENESS:
+   - Keep replies short: 1-3 sentences max. No small talk, no filler, no emojis.
 2. LANGUAGE CONSISTENCY:
-   - Reply strictly in the customer's language (English, Hindi, or Hinglish) detected from their LATEST message.
-3. MENU DISPLAY (SHOWS ONCE PER CHAT):
-   - When the customer asks for the menu (e.g., "menu", "kya milega", "list", "show menu"), call get_full_menu_tool IMMEDIATELY.
-   - If the customer explicitly asks to see it again (e.g., "dobara", "again", "fir se"), call get_full_menu_tool(force_show=True).
-   - If the tool returns the dish list, output the complete list of dishes and prices exactly as returned, one dish per line.
-   - If the tool notes that the menu was already displayed earlier in the chat, politely remind the customer in 1 sentence that the menu is visible above in the chat, and offer to help with any specific dish or craving.
+   - Reply in the customer's language (English, Hindi, or Hinglish) from their LATEST message.
+3. MENU DISPLAY (ONCE PER SESSION):
+   - When customer asks for menu ("menu", "kya milega", "list", "show menu"), call get_full_menu_tool immediately.
+   - If customer asks again ("dobara", "again", "fir se"), call get_full_menu_tool(force_show=True).
+   - Output the complete dish list exactly as returned by the tool, one dish per line.
+   - If tool says menu already shown, tell customer to scroll up in 1 sentence.
 4. ORDERING FLOW:
-   - When the customer names items to order, call add_to_order_tool for each distinct item, then call view_order_tool.
-   - Show the exact order summary from view_order_tool, followed on a new line by ONE of these exact confirmation questions:
+   - When customer names items to order, call add_to_order_tool for EACH distinct item (one call per dish), then call view_order_tool.
+   - After view_order_tool, show the order summary exactly as returned, then ask on a new line:
      English: "Shall I confirm this order?"
      Hindi/Hinglish: "Kya main yeh order confirm kar doon?"
-   - For item removal or changes, call remove_from_order_tool, then view_order_tool, and ask the confirmation question again.
+   - For removals/changes: call remove_from_order_tool, then view_order_tool, ask confirmation again.
 5. CONFIRMATION & CANCELLATION:
-   - Whenever the customer says cancel, nahi, stop, mat karo, or abort, you MUST ALWAYS call cancel_order_tool EVERY SINGLE TIME, even if no order is pending.
-   - Whenever the customer says haan, yes, confirm, ok, or theek hai, you MUST ALWAYS call confirm_order_tool EVERY SINGLE TIME, even if pending order is empty.
+   - Customer says cancel/nahi/stop/mat karo/abort → call cancel_order_tool, then reply politely in 1 sentence.
+   - Customer says haan/yes/confirm/ok/theek hai → call confirm_order_tool, then show Order ID + items + total.
 6. ACCURACY:
-   - NEVER invent dish names, prices, or inventory. Only use tools.
-   - After confirm_order_tool succeeds, state the Order ID, items, and total concisely. Do not write a thank-you line (system appends it automatically).
-7. ATTEMPTS & CANCELLATIONS:
-   - When an order is cancelled or empty confirmation attempted, respond simply and politely in 1 short sentence. The security warning banner is handled automatically.
-8. NO INTERNAL MONOLOGUE:
-   - NEVER output your thoughts, planning, or rules debate. Output ONLY the clean user-facing reply.
+   - NEVER invent dish names, prices, or inventory. Use tools only.
+   - After successful confirm_order_tool: state Order ID, items, total. Do NOT write a thank-you (system adds it).
+7. NO INTERNAL MONOLOGUE:
+   - NEVER output your thoughts or planning. Output ONLY the clean customer-facing reply.
 """
 
 llm = (
@@ -396,7 +405,7 @@ llm = (
         model=GROQ_MODEL,
         api_key=GROQ_API_KEY,
         temperature=0.0,
-        max_tokens=1024,  # Increased from 350 so complete menu prints without cutoff
+        max_tokens=2048,  # Generous limit to prevent any response truncation
     )
     if GROQ_API_KEY
     else None
@@ -416,10 +425,14 @@ class RestaurantBot:
             cut = human_idx[-keep_turns]
             self.messages = [self.messages[0]] + self.messages[cut:]
 
-    def process_message(self, user_input: str) -> str:
+    def process_message(self, user_input: str, session_id: str = "") -> str:
+        global _CURRENT_SESSION_ID
+        _CURRENT_SESSION_ID = session_id
+
         # Quick reset command
         if user_input.strip().lower() in ["reset", "restart", "clear", "clear chat", "naya session"]:
             SESSION.reset_session()
+            MENU_SHOWN_SESSIONS.pop(session_id, None)
             self.messages = [SystemMessage(content=SYSTEM_PROMPT)]
             return "Session reset ho gaya hai! Namaste & Welcome to Bhukhkhad Cafe. Main aapki kya madad karoon?"
 
@@ -427,17 +440,18 @@ class RestaurantBot:
         if SESSION.is_blocked():
             return SESSION.get_lockout_message()
 
-        # Direct fast menu response (shows once per chat session)
+        # Direct fast menu response (shows once per chat session, per session_id)
         is_menu_req = bool(
             re.search(r"^\s*(?:please\s+)?(?:mujhe\s+)?(?:dobara\s+|fir\s*se\s+|phir\s*se\s+|again\s+)?(?:apna\s+)?(?:kripya\s+)?(?:menu|menu\s*card|list|kya\s+milega)(?:\s+dikhao|\s+bhejo|\s+show|\s+batao|\s+dekhna\s+hai)?\s*[.!?]?\s*$", user_input, re.I)
             or re.search(r"^\s*(?:show\s+)?(?:the\s+)?(?:menu)(?:\s+again|\s+please)?\s*[.!?]?\s*$", user_input, re.I)
         )
         if is_menu_req:
             force_show = bool(re.search(r"\b(dobara|again|fir se|phir se)\b", user_input, re.I))
-            if SESSION.menu_shown and not force_show:
+            menu_already_shown = MENU_SHOWN_SESSIONS.get(session_id, False)
+            if menu_already_shown and not force_show:
                 return "📋 Menu upar chat mein already share kiya gaya hai, aap scroll karke dekh sakte hain! Kisi dish ke baare mein jaanna ho ya order karna ho to batayein."
 
-            SESSION.menu_shown = True
+            MENU_SHOWN_SESSIONS[session_id] = True
             menu_text = "\n".join(
                 f"{m['dish_name']} - Rs.{m['price']}"
                 for m in MENU
@@ -500,27 +514,57 @@ class RestaurantBot:
             attempt_warning_captured = str(tool_res)
 
         self._trim()
-        reply = (ai_msg.content if ai_msg else "") or "Maaf kijiye, kuch samajh nahi aaya. Dobara batayein?"
+        reply = (ai_msg.content if ai_msg else "") or ""
 
-        # Safety net: a suspiciously short/garbled reply gets one retry with a stricter nudge.
-        if len(reply.strip()) < 8 or not re.search(r"[a-zA-Z]{3,}", reply):
-            self.messages.append(HumanMessage(
-                content="(system note: your last reply looked incomplete or garbled - "
-                        "please resend a clear, well-formed reply in the same language/style.)"
-            ))
+        # Safety net: if model returned no text content after tool calls,
+        # look at the last tool message for context and retry once with a clear nudge.
+        if not reply.strip():
+            # Find the last tool result to include as context for retry
+            last_tool_content = ""
+            for m in reversed(self.messages):
+                if isinstance(m, ToolMessage):
+                    last_tool_content = m.content
+                    break
+
+            retry_prompt = (
+                f"You called tools and got this result: \"{last_tool_content}\". "
+                "Now write a clear, friendly customer-facing reply based on this result. "
+                "Do NOT call any more tools. Just reply to the customer directly."
+            )
+            self.messages.append(HumanMessage(content=retry_prompt))
             retry_msg = llm_with_tools.invoke(self.messages)
             self.messages.append(retry_msg)
             if retry_msg and hasattr(retry_msg, "response_metadata"):
                 usage = retry_msg.response_metadata.get("token_usage", {})
                 tokens_consumed += usage.get("total_tokens", 0)
-            if retry_msg.content and len(retry_msg.content.strip()) >= 8:
+            if retry_msg and retry_msg.content and retry_msg.content.strip():
                 reply = retry_msg.content
+
+        # Final fallback if still empty
+        if not reply.strip():
+            reply = "Maaf kijiye, kuch samajh nahi aaya. Dobara batayein?"
 
         # Clean any raw attempt/lockout fragments the LLM might have duplicated from history
         reply = re.sub(r"\(?Warning:\s*Failed/Cancelled\s*Attempt\s*\d+/\d+.*?\)?", "", reply, flags=re.IGNORECASE)
         reply = re.sub(r"\(?\d+\s*failed/cancelled\s*attempts\s*reached.*?\)?", "", reply, flags=re.IGNORECASE)
         reply = re.sub(r"🚫\s*Security\s*(?:timeout|Lockout).*?(?=\n|$)", "", reply, flags=re.IGNORECASE)
         reply = re.sub(r"⚠️\s*Aapne\s*3\s*baar.*?(?=\n|$)", "", reply, flags=re.IGNORECASE)
+
+        # Clean raw backend/tool output that leaked into the customer reply
+        # Remove duplicate "Order ORD-XXX confirmed..." lines (keep only the first)
+        reply = re.sub(r"(Order ORD-[A-Z0-9]+ confirmed[^\n]*)(\n.*?Order ORD-[A-Z0-9]+ confirmed[^\n]*)+", r"\1", reply, flags=re.IGNORECASE)
+        # Remove raw tool artifacts like "Added Xx ... to order", "Pending order:", tool status lines
+        reply = re.sub(r"^Added \d+x .+ to order\.?\s*$", "", reply, flags=re.MULTILINE | re.IGNORECASE)
+        reply = re.sub(r"^Pending order:.*$", "", reply, flags=re.MULTILINE | re.IGNORECASE)
+        reply = re.sub(r"^No pending order to confirm\..*$", "", reply, flags=re.MULTILINE | re.IGNORECASE)
+        reply = re.sub(r"^No order to cancel\..*$", "", reply, flags=re.MULTILINE | re.IGNORECASE)
+        reply = re.sub(r"^No matching order found\..*$", "", reply, flags=re.MULTILINE | re.IGNORECASE)
+        # Remove truncation notice if model included it
+        reply = re.sub(r"\[The response was truncated.*?\]\.?", "", reply, flags=re.IGNORECASE)
+        # Remove "Order ORD-XXX status: COMPLETED/CONFIRMED" raw tool lines (but keep friendly order confirmations)
+        reply = re.sub(r"^Order ORD-[A-Z0-9]+ status:\s*\w+\.?\s*$", "", reply, flags=re.MULTILINE)
+        # Collapse multiple blank lines
+        reply = re.sub(r"\n{3,}", "\n\n", reply)
         reply = reply.strip()
 
         # Guarantee: If lockout was activated this turn or active, ensure user sees lockout message immediately
@@ -544,8 +588,8 @@ class RestaurantBot:
 
         return reply
 
-    def process_message_stream(self, user_input: str):
-        full = self.process_message(user_input)
+    def process_message_stream(self, user_input: str, session_id: str = ""):
+        full = self.process_message(user_input, session_id=session_id)
         words = full.split(" ")
         for i, w in enumerate(words):
             yield w + (" " if i < len(words) - 1 else "")
@@ -568,6 +612,7 @@ app.add_middleware(
 # Pydantic request body schema
 class ChatRequest(BaseModel):
     message: str = ""
+    session_id: str = ""
 
 
 def get_client_ip(request: Request) -> str:
@@ -610,7 +655,7 @@ def chat(body: ChatRequest, request: Request):
         return JSONResponse({"reply": err_msg})
 
     try:
-        reply = bot.process_message(body.message)
+        reply = bot.process_message(body.message, session_id=body.session_id)
     except Exception as e:
         reply = f"Error: {e}"
     return JSONResponse({"reply": reply})
@@ -632,7 +677,7 @@ def chat_stream(body: ChatRequest, request: Request):
 
     def generate():
         try:
-            for token in bot.process_message_stream(body.message):
+            for token in bot.process_message_stream(body.message, session_id=body.session_id):
                 yield f"data: {json.dumps({'token': token})}\n\n"
             yield "data: [DONE]\n\n"
         except (BrokenPipeError, ConnectionResetError):
