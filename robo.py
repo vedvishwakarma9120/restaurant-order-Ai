@@ -217,7 +217,7 @@ class Session:
 
 SESSION = Session()
 
-# ---------------- Tools ----------------
+# Tools
 
 @tool
 def search_menu_tool(query: str) -> str:
@@ -397,7 +397,7 @@ STRICT OPERATING RULES:
    - NEVER invent dish names, prices, or inventory. Use tools only.
    - After successful confirm_order_tool: state Order ID, items, total. Do NOT write a thank-you (system adds it).
 7. NO INTERNAL MONOLOGUE:
-   - NEVER output your thoughts or planning. Output ONLY the clean customer-facing reply.
+   - NEVER output your thoughts or planning. Output ONLY the clean customer-facing reply.   
 """
 
 llm = (
@@ -596,7 +596,7 @@ class RestaurantBot:
             time.sleep(0.015)
 
 
-# ---------------- FastAPI app ----------------
+# FastAPI app 
 app = FastAPI(title="Bhukhkhad Cafe AI", version="1.0.0")
 bot = RestaurantBot()
 
